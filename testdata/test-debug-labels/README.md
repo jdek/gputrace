@@ -1,63 +1,119 @@
 # test-debug-labels
 
-Test workload for validating GPU trace parsing of:
-- Debug groups (pushDebugGroup/popDebugGroup)
-- Encoder labels
-- Buffer labels
-- Nested debug hierarchies
+Test programs for validating GPU trace parsing of debug annotations.
 
-## Purpose
+## Overview
 
-Generates a GPU trace with comprehensive labeling to test gputrace parsing of:
+Two equivalent implementations that generate GPU traces with rich debug annotations:
+- **main.cpp** - C++ using MLX debug API
+- **main_objc.m** - Objective-C using raw Metal API
 
-1. **Command Buffer Labels**: `ForwardPass`
-2. **Debug Group Hierarchy**:
-   - `training_iteration`
-     - `forward_pass`
-       - `compute_add` (encoder-level)
-     - `optimization_step`
-       - `compute_multiply` (encoder-level)
-       - `apply_scale_factor` (encoder-level)
-3. **Encoder Labels**: `VectorAddition`, `VectorMultiply`, `ApplyScaling`
-4. **Buffer Labels**:
-   - `input_tensor_A`
-   - `input_tensor_B`
-   - `temp_computation_result`
-   - `final_output`
-   - `scale_factor`
+Both programs implement the same computation graph to ensure we can parse annotations from both MLX-generated and raw Metal traces.
+
+## Annotations Generated
+
+### Debug Groups (Hierarchical Labels)
+
+```
+training_iteration
+├── forward_pass
+│   ├── linear_layer
+│   └── activation
+├── data_preprocessing
+│   └── normalization
+├── loss_computation
+│   ├── mse_loss
+│   └── regularization
+├── backward_pass
+│   ├── compute_gradients
+│   └── gradient_clipping
+└── optimization_step
+    └── apply_updates
+```
+
+### Named Buffers
+
+**C++ version (23 buffers):**
+- input_tensor_A, input_tensor_B, bias_vector
+- matmul_output, biased_output, relu_output
+- activation_mean, activation_variance, normalized_activations
+- target_values, prediction_error, squared_error, mean_squared_error
+- l2_regularization, total_loss
+- loss_gradient, weight_gradients, bias_gradients
+- gradient_norm, clipped_gradients
+- updated_weights, updated_bias
+
+**Objective-C version (20 buffers):**
+- Same as above but slightly fewer intermediate buffers
+
+### Encoder Labels
+
+Each compute operation has a descriptive encoder label:
+- MatrixMultiply, AddBias, ReLUActivation
+- ComputeMean, ComputeVariance, Normalize
+- PredictionError, SquareError, MeanLoss
+- L2Penalty, ComputeGradients, ClipGradients, UpdateWeights
 
 ## Building
 
 ```bash
-# Compile Objective-C test program
-clang -framework Metal -framework Foundation -o test-debug-labels main.m
-
-# Run with GPU tracing enabled
-MTL_CAPTURE_ENABLED=1 ./test-debug-labels
-
-# Or capture in Xcode Instruments
-# Product > Profile > Metal System Trace
+make              # Build both versions
+make test-debug-labels        # Build C++ version only
+make test-debug-labels-objc   # Build Objective-C version only
 ```
 
-## Expected Trace Structure
+## Running
 
-The generated trace should show:
-- Nested debug groups in hierarchy
-- Labeled encoders within groups
-- Named buffers in shader bindings
-- Clear operation context for profiling
-
-## Validation
-
-Parse the generated trace with gputrace:
+### C++ MLX Version
 
 ```bash
-# Extract timing data
-../../cmd/gputrace/gputrace timing test-debug-labels.gputrace
+# Run with automatic GPU capture
+make run-cpp
 
-# Verify encoder labels are parsed
-../../cmd/gputrace/gputrace export-counters test-debug-labels.gputrace
-
-# Check buffer names appear in output
-../../cmd/gputrace/gputrace dump test-debug-labels.gputrace | grep -i "buffer\|label"
+# Or manually
+MTL_CAPTURE_ENABLED=1 ./test-debug-labels
 ```
+
+Generates `test_annotations.gputrace`
+
+### Objective-C Metal Version
+
+```bash
+# Run without automatic capture
+make run-objc
+
+# Or manually
+./test-debug-labels-objc
+
+# Capture with xctrace
+xctrace record --template 'Metal System Trace' --launch -- ./test-debug-labels-objc --output objc_trace.trace
+```
+
+## Validating Parsing
+
+Use the generated gputrace files to test the gputrace parser:
+
+```bash
+# Parse and export to CSV
+../../cmd/gputrace/gputrace export-counters test_annotations.gputrace
+
+# Check for debug labels in output
+grep -i "training_iteration\|forward_pass" output.csv
+
+# Verify buffer names appear
+grep -i "input_tensor_A\|matmul_output" output.csv
+```
+
+## Expected Use
+
+These test programs are designed to validate:
+1. Hierarchical debug group parsing (push/pop labels)
+2. Buffer name/label extraction
+3. Encoder label extraction
+4. Equivalence between MLX and raw Metal annotation formats
+
+## Related Beads
+
+- gputrace-118: Create C++ MLX test program (CLOSED)
+- gputrace-119: Create Objective-C equivalent (CLOSED)
+- gputrace-120: Validate parsing of annotations (OPEN)
