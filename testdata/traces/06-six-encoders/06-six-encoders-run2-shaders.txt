@@ -1,7 +1,0 @@
-Cost	Name	Type	Pipeline State	# SIMD Groups	# Allocated Registers	High Register	Spilled Bytes	
-47.88%	complex_math	Compute	Compute Pipeline 0x104ccce90	48	38	38	0 bytes	
-17.34%	simple_add	Compute	Compute Pipeline 0x104cc9490	48	6	6	0 bytes	
-15.64%	simple_multiply	Compute	Compute Pipeline 0x104ccad90	48	6	6	0 bytes	
-7.27%	simple_subtract	Compute	Compute Pipeline 0x104ccb890	48	6	6	0 bytes	
-6.17%	simple_divide	Compute	Compute Pipeline 0x104ccc390	48	6	6	0 bytes	
-5.68%	low_register_pressure	Compute	Compute Pipeline 0xa56f48000	48	4	4	0 bytes	

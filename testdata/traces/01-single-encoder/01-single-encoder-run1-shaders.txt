@@ -1,2 +1,0 @@
-Cost	Name	Type	Pipeline State	# SIMD Groups	# Allocated Registers	High Register	Spilled Bytes	
-100.00%	simple_add	Compute	Compute Pipeline 0x1015acfd0	48	6	6	0 bytes	
