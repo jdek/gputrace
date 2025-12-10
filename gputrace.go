@@ -105,6 +105,9 @@ type (
 
 	// Pipeline function mapping types
 	PipelineFunctionMap = trace.PipelineFunctionMap
+
+	// Kernel analysis types
+	KernelStat = trace.KernelStat
 )
 
 // Re-export constants
