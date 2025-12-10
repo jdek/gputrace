@@ -146,9 +146,19 @@ func exportTextTimeline(timeline *Timeline) error {
 	}
 
 	firstTimestamp := timeline.StartTime
+	// If first CB starts before first encoder, use that as base
+	if len(cbs) > 0 && cbs[0].Timestamp < firstTimestamp {
+		firstTimestamp = cbs[0].Timestamp
+	}
 
 	for _, cb := range cbs {
-		cbStart := float64(cb.Timestamp-firstTimestamp) / 1000000.0 // ms from start
+		var cbStart float64
+		if cb.Timestamp >= firstTimestamp {
+			cbStart = float64(cb.Timestamp-firstTimestamp) / 1000000.0 // ms from start
+		} else {
+			// This shouldn't happen if we set firstTimestamp correctly, but just in case
+			cbStart = 0.0
+		}
 		fmt.Printf("%s [%.1fms]\n", cb.Name, cbStart)
 
 		// Get CB index from args
