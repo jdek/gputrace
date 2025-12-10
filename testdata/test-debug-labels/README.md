@@ -95,7 +95,7 @@ Use the generated gputrace files to test the gputrace parser:
 
 ```bash
 # Parse and export to CSV
-../../cmd/gputrace/gputrace export-counters test_annotations.gputrace
+gputrace export-counters test_annotations.gputrace
 
 # Check for debug labels in output
 grep -i "training_iteration\|forward_pass" output.csv
@@ -112,8 +112,7 @@ These test programs are designed to validate:
 3. Encoder label extraction
 4. Equivalence between MLX and raw Metal annotation formats
 
-## Related Beads
+## See Also
 
-- gputrace-118: Create C++ MLX test program (CLOSED)
-- gputrace-119: Create Objective-C equivalent (CLOSED)
-- gputrace-120: Validate parsing of annotations (OPEN)
+- [RECORD_FORMATS.md](../../RECORD_FORMATS.md) - Record format documentation
+- [docs/BINARY_FORMAT_REFERENCE.md](../../docs/BINARY_FORMAT_REFERENCE.md) - Binary format reference
