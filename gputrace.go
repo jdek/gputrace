@@ -108,6 +108,7 @@ type (
 
 	// Kernel analysis types
 	KernelStat = trace.KernelStat
+	TimingStat = trace.TimingStat
 )
 
 // Re-export constants

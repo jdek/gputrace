@@ -226,8 +226,21 @@ func (t *Trace) AnalyzeKernels() (map[string]*KernelStat, error) {
 					}
 
 					// If still unknown, fallback to encoder label guess
-					if kernelName == "unknown" && isActualFunctionName(currentEncoder.Label) {
-						kernelName = currentEncoder.Label
+					// For ICB, we trust the encoder label if it looks plausible
+					if kernelName == "unknown" && currentEncoder.Label != "" {
+						// Relaxed check: Accept if it has underscores OR if it matches known MLX patterns
+						if isActualFunctionName(currentEncoder.Label) {
+							kernelName = currentEncoder.Label
+						} else {
+							// Try simpler check for ICB support
+							// Many MLX kernels are just function names like "rms_norm_looped"
+							// which might fail strict checks if they don't look "function-y" enough?
+							// Actually isActualFunctionName requires underscores and lowercase start.
+							// "rms_norm_looped" passes.
+							// But maybe some don't?
+							// Let's just trust the label if we have nothing else.
+							kernelName = currentEncoder.Label
+						}
 					}
 
 					// Update stats

@@ -25,7 +25,7 @@ This command extracts the mapping between pipeline state objects and their
 associated kernel functions, making it easy to understand which Metal functions
 are being executed.
 
-It can also display dispatch counts and associated debug groups/encoder labels.
+It can also display dispatch counts, timing information (if available), and associated debug groups/encoder labels.
 
 Examples:
   # List all kernels with dispatch counts
@@ -66,6 +66,49 @@ func runKernels(cmd *cobra.Command, args []string) error {
 	stats, err := trace.AnalyzeKernels()
 	if err != nil {
 		return fmt.Errorf("analyze kernels: %w", err)
+	}
+
+	// Try to get timing stats
+	var timingStats map[string]*gputrace.TimingStat
+	// We check for perf counters availability
+	if trace.HasPerfCounters() {
+		// Use extracted timing data
+		// Note: We need to bridge internal/timing to something usable here without import cycles in core packages.
+		// Since cmd can import anything, we can implement extraction here or use a helper.
+		// But gputrace package re-exports ExtractTimingData.
+
+		timings, err := gputrace.ExtractTimingData(trace)
+		if err == nil {
+			timingStats = make(map[string]*gputrace.TimingStat)
+			for _, t := range timings {
+				name := t.Label
+				// Normalize name to match kernel stats if possible
+				// Encoder timing labels usually match encoder labels
+
+				// Clean up name if it's an "Encoder_X_kernel" style
+				if strings.Contains(name, "_") {
+					parts := strings.SplitN(name, "_", 3)
+					if len(parts) >= 3 && parts[0] == "Encoder" {
+						name = parts[2]
+					}
+				}
+
+				if _, exists := timingStats[name]; !exists {
+					timingStats[name] = &gputrace.TimingStat{
+						MinTime: 1e9,
+					}
+				}
+
+				s := timingStats[name]
+				s.TotalTime += t.DurationMs
+				if t.DurationMs < s.MinTime {
+					s.MinTime = t.DurationMs
+				}
+				if t.DurationMs > s.MaxTime {
+					s.MaxTime = t.DurationMs
+				}
+			}
+		}
 	}
 
 	// Filter and sort
@@ -111,31 +154,71 @@ func runKernels(cmd *cobra.Command, args []string) error {
 		}
 	}
 	// Cap max length to reasonable value to prevent wrapping issues
-	if maxNameLen > 80 {
-		maxNameLen = 80
+	if maxNameLen > 60 {
+		maxNameLen = 60
 	}
 
 	// Print table header
 	nameFmt := fmt.Sprintf("%%-%ds", maxNameLen)
+
+	// Adjust columns if we have timing
+	hasTiming := len(timingStats) > 0
+
 	fmt.Printf(nameFmt+"  %-18s  %-10s", "Name", "Pipeline State", "Dispatches")
+	if hasTiming {
+		fmt.Printf("  %-10s  %-10s", "Total Time", "Avg Time")
+	}
 	if kernelsVerbose || kernelsStats {
 		fmt.Printf("  %s", "Debug Groups / Labels")
 	}
 	fmt.Println()
-	fmt.Printf(strings.Repeat("-", maxNameLen)+"  %-18s  %-10s", strings.Repeat("-", 18), strings.Repeat("-", 10))
-	if kernelsVerbose || kernelsStats {
-		fmt.Printf("  %s", strings.Repeat("-", 30))
+
+	sepLine := strings.Repeat("-", maxNameLen) + "  " + strings.Repeat("-", 18) + "  " + strings.Repeat("-", 10)
+	if hasTiming {
+		sepLine += "  " + strings.Repeat("-", 10) + "  " + strings.Repeat("-", 10)
 	}
-	fmt.Println()
+	if kernelsVerbose || kernelsStats {
+		sepLine += "  " + strings.Repeat("-", 30)
+	}
+	fmt.Println(sepLine)
 
 	// Print rows
 	for _, k := range kernels {
 		name := k.Name
-		if len(name) > maxNameLen {
-			name = name[:maxNameLen-3] + "..."
+		displayName := name
+		if len(displayName) > maxNameLen {
+			displayName = displayName[:maxNameLen-3] + "..."
 		}
 
-		fmt.Printf(nameFmt+"  0x%-16x  %-10d", name, k.PipelineAddr, k.DispatchCount)
+		fmt.Printf(nameFmt+"  0x%-16x  %-10d", displayName, k.PipelineAddr, k.DispatchCount)
+
+		if hasTiming {
+			if tStat, ok := timingStats[name]; ok {
+				avg := tStat.TotalTime
+				if k.DispatchCount > 0 {
+					avg = tStat.TotalTime / float64(k.DispatchCount)
+				}
+				// Note: Timing extraction might not match 1:1 with dispatch counts if aggregation is different.
+				// But we display what we have.
+				fmt.Printf("  %7.2f ms  %7.3f ms", tStat.TotalTime, avg)
+			} else {
+				// Try looking up via encoder labels if direct name match failed
+				var found bool
+				for label := range k.EncoderLabels {
+					if tStat, ok := timingStats[label]; ok {
+						// Found a match via encoder label
+						// Aggregating multiple matches is complex, just show first found for now
+						// or maybe we should have aggregated timingStats differently
+						fmt.Printf("  %7.2f ms  %7.3f ms", tStat.TotalTime, tStat.TotalTime/float64(k.DispatchCount)) // approx
+						found = true
+						break
+					}
+				}
+				if !found {
+					fmt.Printf("  %10s  %10s", "-", "-")
+				}
+			}
+		}
 
 		if kernelsVerbose || kernelsStats {
 			var details []string
@@ -168,28 +251,9 @@ func runKernels(cmd *cobra.Command, args []string) error {
 			}
 		}
 		fmt.Println()
-
-		// If very verbose/stats and there are many details, print them on subsequent lines
-		if (kernelsVerbose || kernelsStats) && (len(k.DebugGroups) > 0 || len(k.EncoderLabels) > 0) {
-			// Print full list of debug groups if requested
-			if kernelsStats && len(k.DebugGroups) > 0 {
-				// Group by common prefixes? For now just list them
-				var groups []string
-				for g := range k.DebugGroups {
-					groups = append(groups, g)
-				}
-				sort.Strings(groups)
-
-				// Limit to top 5 if not using --stats explicitly (handled above by simple logic,
-				// but here we can be more verbose)
-				// Actually, let's just leave it simple for now.
-				// If user wants full breakdown, maybe we need a dedicated view.
-			}
-		}
 	}
 
 	// Print summary of unknown pipelines if any
-	// (AnalyzeKernels handles this by creating an "unknown" entry if needed)
 	if k, ok := stats["unknown"]; ok && k.DispatchCount > 0 {
 		fmt.Printf("\nUnknown Pipelines: %d dispatches (encoder: %v)\n", k.DispatchCount, k.EncoderLabels)
 	}
