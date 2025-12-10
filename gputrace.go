@@ -109,6 +109,9 @@ type (
 	// Kernel analysis types
 	KernelStat = trace.KernelStat
 	TimingStat = trace.TimingStat
+
+	// Timeline types
+	KernelExecution = trace.KernelExecution
 )
 
 // Re-export constants
@@ -224,6 +227,9 @@ var (
 	// Insights functions (gputrace-97)
 	GenerateInsights     = analysis.GenerateInsights
 	FormatInsightsReport = analysis.FormatInsightsReport
+
+	// Timeline functions
+	CorrelateTimings = trace.CorrelateTimings
 )
 
 // Open opens and parses a .gputrace bundle.

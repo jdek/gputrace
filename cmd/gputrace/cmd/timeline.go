@@ -51,8 +51,8 @@ Examples:
 func init() {
 	rootCmd.AddCommand(timelineCmd)
 
-	timelineCmd.Flags().StringVarP(&timelineOutput, "output", "o", "timeline.json", "Output file path")
-	timelineCmd.Flags().StringVar(&timelineFormat, "format", "chrome", "Output format: chrome, json")
+	timelineCmd.Flags().StringVarP(&timelineOutput, "output", "o", "timeline.json", "Output file path (default: stdout for text format)")
+	timelineCmd.Flags().StringVar(&timelineFormat, "format", "text", "Output format: text, chrome, html, json")
 }
 
 func runTimeline(cmd *cobra.Command, args []string) error {
@@ -77,6 +77,12 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 
 	// Export based on format
 	switch timelineFormat {
+	case "text":
+		if err := exportTextTimeline(timeline); err != nil {
+			return fmt.Errorf("failed to export text timeline: %w", err)
+		}
+		// Text format prints to stdout, so we return early
+		return nil
 	case "chrome":
 		if err := exportChromeTracing(timeline, timelineOutput); err != nil {
 			return fmt.Errorf("failed to export Chrome tracing: %w", err)
@@ -90,7 +96,7 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to export JSON: %w", err)
 		}
 	default:
-		return fmt.Errorf("unknown format: %s (supported: chrome, html, json)", timelineFormat)
+		return fmt.Errorf("unknown format: %s (supported: text, chrome, html, json)", timelineFormat)
 	}
 
 	fmt.Printf("✓ Timeline written to: %s\n", timelineOutput)
@@ -105,6 +111,125 @@ func runTimeline(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// exportTextTimeline prints the timeline to stdout in a hierarchical format.
+func exportTextTimeline(timeline *Timeline) error {
+	if len(timeline.Encoders) == 0 && len(timeline.Events) == 0 {
+		fmt.Println("No timeline data available.")
+		return nil
+	}
+
+	// Group encoders by command buffer (heuristic: sequential index or time)
+	// Since we don't have explicit CB linkage in Timeline struct yet,
+	// we will assume a simple structure or just list encoders.
+	// Update: generateTimeline now adds command buffer events.
+
+	// Find command buffer events
+	var cbs []TimelineEvent
+	for _, event := range timeline.Events {
+		if event.Category == "command_buffer" {
+			cbs = append(cbs, event)
+		}
+	}
+
+	// Sort CBs by timestamp
+	// ... (assuming they are sorted by append order, but good to ensure)
+
+	// If no CB events, create a dummy one
+	if len(cbs) == 0 {
+		cbs = append(cbs, TimelineEvent{
+			Name:      "CB#0",
+			Timestamp: timeline.StartTime,
+			Duration:  timeline.Duration,
+		})
+	}
+
+	firstTimestamp := timeline.StartTime
+
+	for _, cb := range cbs {
+		cbStart := float64(cb.Timestamp-firstTimestamp) / 1000000.0 // ms from start
+		fmt.Printf("%s [%.1fms]\n", cb.Name, cbStart)
+
+		// Get CB index from args
+		cbIndex, ok := cb.Args["index"].(int)
+		if !ok {
+			// fallback if index not present (should be there)
+			continue
+		}
+
+		// Collect encoders for this CB
+		var cbEncoders []EncoderInfo
+		var cbEncoderIndices []int
+		for i, encoder := range timeline.Encoders {
+			// Check kernels associated with this encoder to see if they belong to this CB
+			belongsToCB := false
+			for _, k := range timeline.Kernels {
+				if k.Encoder == encoder.Index {
+					// Check if kernel belongs to this CB
+					if kArgCB, ok := getKernelCBIndex(timeline, k); ok && kArgCB == cbIndex {
+						belongsToCB = true
+						break
+					}
+				}
+			}
+
+			if belongsToCB {
+				cbEncoders = append(cbEncoders, encoder)
+				cbEncoderIndices = append(cbEncoderIndices, i)
+			}
+		}
+
+		for i, encoder := range cbEncoders {
+			startMs := float64(encoder.StartTime-firstTimestamp) / 1e6
+			durationMs := float64(encoder.Duration) / 1e6
+
+			label := encoder.Label
+			if label == "" {
+				label = "Unknown Encoder"
+			}
+
+			// We iterate through Kernels to find those belonging to this encoder
+			var encoderKernels []KernelInfo
+			for _, k := range timeline.Kernels {
+				if k.Encoder == encoder.Index {
+					encoderKernels = append(encoderKernels, k)
+				}
+			}
+
+			prefix := "├─"
+			if i == len(cbEncoders)-1 {
+				prefix = "└─"
+			}
+
+			if len(encoderKernels) > 0 {
+				for _, k := range encoderKernels {
+					kStartMs := float64(k.StartTime-firstTimestamp) / 1e6
+					kDurationMs := float64(k.Duration) / 1e6
+
+					fmt.Printf("  %s %.2fms: %s (%.2fms) - %s\n",
+						prefix, kStartMs, k.Name, kDurationMs, label)
+				}
+			} else {
+				fmt.Printf("  %s %.2fms: %s (%.2fms) - %s\n", prefix, startMs, label, durationMs, "Encoder")
+			}
+		}
+	}
+
+	return nil
+}
+
+func getKernelCBIndex(timeline *Timeline, k KernelInfo) (int, bool) {
+	// Find the event for this kernel to get args
+	for _, e := range timeline.Events {
+		// Matching logic: same name, same start time (converted)
+		if e.Category == "kernel" && e.Name == k.Name && e.Timestamp == k.StartTime/1000 {
+			if cbIdx, ok := e.Args["cb_index"].(int); ok {
+				return cbIdx, true
+			}
+		}
+	}
+	return -1, false
 }
 
 // Timeline represents the complete timeline data.
@@ -236,45 +361,113 @@ func generateTimeline(trace *gputrace.Trace) (*Timeline, error) {
 		timeline.Events = append(timeline.Events, event)
 	}
 
-	// Add kernel events (if we have kernel-level timing)
-	if len(metrics.KernelTimings) > 0 {
-		// Distribute kernels across encoder timeline
-		// This is approximate since we don't have exact per-invocation timing
-		for i, kernel := range metrics.KernelTimings {
-			encoderIdx := i % len(timeline.Encoders)
-			if len(timeline.Encoders) == 0 {
-				break
+	// Extract accurate kernel timeline
+	kernelTimeline, err := trace.ExtractKernelTimeline()
+	if err == nil {
+		// Correlate with timing
+		// We need EncoderTimings from metrics (which uses ExtractTimingData internally)
+		// We convert gputrace.EncoderTiming to trace.EncoderTiming if needed, but they are aliased.
+		// However, metrics.EncoderTimings is []*timing.EncoderTiming which is alias to trace.EncoderTiming
+		// CorrelateTimings expects []trace.EncoderTiming (value, not pointer?)
+		// Let's check signature.
+		// CorrelateTimings(executions []KernelExecution, encoderTimings []EncoderTiming) []KernelExecution
+		// metrics.EncoderTimings is []*EncoderTiming. We need to convert.
+
+		var encoderTimings []gputrace.EncoderTiming
+		for _, et := range metrics.EncoderTimings {
+			if et != nil {
+				encoderTimings = append(encoderTimings, *et)
+			}
+		}
+
+		correlated := gputrace.CorrelateTimings(kernelTimeline, encoderTimings)
+
+		for _, k := range correlated {
+			// Find encoder info
+			var encoderStart uint64
+			if k.EncoderIndex >= 0 && k.EncoderIndex < len(timeline.Encoders) {
+				encoderStart = timeline.Encoders[k.EncoderIndex].StartTime
 			}
 
-			encoder := timeline.Encoders[encoderIdx]
-			// Create kernel event within encoder timeframe
+			// Use correlated timestamps if available, otherwise fall back to encoder bounds
+			startTime := k.Timestamp
+			if startTime == 0 {
+				startTime = encoderStart
+			}
+
+			duration := k.Duration
+			// If duration is 0, use a default small value
+			if duration == 0 {
+				duration = 1000 // 1us
+			}
+
 			kernelInfo := KernelInfo{
-				Name:      kernel.Name,
-				Encoder:   encoderIdx,
-				StartTime: encoder.StartTime,
-				EndTime:   encoder.EndTime,
-				Duration:  uint64(kernel.AvgDuration.Nanoseconds()),
+				Name:      k.Name,
+				Encoder:   k.EncoderIndex,
+				StartTime: startTime,
+				EndTime:   startTime + duration,
+				Duration:  duration,
 			}
 			timeline.Kernels = append(timeline.Kernels, kernelInfo)
 
 			// Create timeline event for kernel
 			event := TimelineEvent{
-				Name:      kernel.Name,
+				Name:      k.Name,
 				Category:  "kernel",
 				Phase:     "X",
-				Timestamp: encoder.StartTime / 1000, // Convert to microseconds
-				Duration:  uint64(kernel.AvgDuration.Microseconds()),
+				Timestamp: startTime / 1000, // Convert to microseconds
+				Duration:  duration / 1000,  // Convert to microseconds
 				ProcessID: 1,
 				ThreadID:  2, // Use different thread for kernels
 				Args: map[string]interface{}{
-					"invocations": kernel.InvocationCount,
-					"avg_ns":      kernel.AvgDuration.Nanoseconds(),
-					"min_ns":      kernel.MinDuration.Nanoseconds(),
-					"max_ns":      kernel.MaxDuration.Nanoseconds(),
-					"avg_us":      kernel.AvgDuration.Microseconds(),
+					"encoder_index": k.EncoderIndex,
+					"cb_index":      k.CommandBufferID,
+					"debug_group":   k.DebugGroup,
 				},
 			}
 			timeline.Events = append(timeline.Events, event)
+		}
+	} else {
+		// Fallback to old approximate method if extraction fails
+		if len(metrics.KernelTimings) > 0 {
+			// Distribute kernels across encoder timeline
+			// This is approximate since we don't have exact per-invocation timing
+			for i, kernel := range metrics.KernelTimings {
+				encoderIdx := i % len(timeline.Encoders)
+				if len(timeline.Encoders) == 0 {
+					break
+				}
+
+				encoder := timeline.Encoders[encoderIdx]
+				// Create kernel event within encoder timeframe
+				kernelInfo := KernelInfo{
+					Name:      kernel.Name,
+					Encoder:   encoderIdx,
+					StartTime: encoder.StartTime,
+					EndTime:   encoder.EndTime,
+					Duration:  uint64(kernel.AvgDuration.Nanoseconds()),
+				}
+				timeline.Kernels = append(timeline.Kernels, kernelInfo)
+
+				// Create timeline event for kernel
+				event := TimelineEvent{
+					Name:      kernel.Name,
+					Category:  "kernel",
+					Phase:     "X",
+					Timestamp: encoder.StartTime / 1000, // Convert to microseconds
+					Duration:  uint64(kernel.AvgDuration.Microseconds()),
+					ProcessID: 1,
+					ThreadID:  2, // Use different thread for kernels
+					Args: map[string]interface{}{
+						"invocations": kernel.InvocationCount,
+						"avg_ns":      kernel.AvgDuration.Nanoseconds(),
+						"min_ns":      kernel.MinDuration.Nanoseconds(),
+						"max_ns":      kernel.MaxDuration.Nanoseconds(),
+						"avg_us":      kernel.AvgDuration.Microseconds(),
+					},
+				}
+				timeline.Events = append(timeline.Events, event)
+			}
 		}
 	}
 
