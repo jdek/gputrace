@@ -1,2 +1,10 @@
 Serving trace at http://localhost:9090
 Press Ctrl+C to stop
+Files in embedded static/:
+ - api-calls.html
+ - assets
+   - index-CyL9QtDY.js
+   - index-cFe1brkx.js
+ - index.html
+ - kernels.html
+Serving trace at http://127.0.0.1:9090
