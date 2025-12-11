@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"github.com/tmc/gputrace"
 )
@@ -33,6 +34,8 @@ func setupRoutes(mux *http.ServeMux, trace *gputrace.Trace) {
 	mux.HandleFunc("/api/kernels", apiKernelsHandler(trace))
 	mux.HandleFunc("/api/api-calls", apiCallsAPIHandler(trace))
 	mux.HandleFunc("/api/trace", apiTraceHandler(trace))
+	mux.HandleFunc("/api/timeline", apiTimelineHandler(trace))
+	mux.HandleFunc("/api/resources", apiResourcesHandler(trace))
 
 	// Serve static files
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -46,13 +49,31 @@ func setupRoutes(mux *http.ServeMux, trace *gputrace.Trace) {
 	// The SPA index.html requests /assets/..., which maps to static/assets/...
 	mux.Handle("/assets/", fileServer)
 
+	// Handle components/ directory for imports
+	mux.Handle("/components/", fileServer)
+
 	// Catch-all handler for the SPA
 	// For any other route, serve index.html (though we prioritize API and assets above)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
-			// If it's not root/index and hasn't been handled by API/assets,
-			// it might be a missing file or a client-side route.
-			// Let's use the file server to try to serve the file
+		path := r.URL.Path
+
+		// Check if it's an API call not handled
+		if strings.HasPrefix(path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Try to serve file if it has an extension (likely a static asset)
+		// e.g. /main.js, /utils.js, /app.js
+		if filepath.Ext(path) != "" {
+			// Serve via file server
+			// staticFS contains main.js at root.
+			// URL /main.js maps to staticFS root /main.js.
+
+			// Custom serving to force MIME types for .js
+			if strings.HasSuffix(path, ".js") {
+				w.Header().Set("Content-Type", "application/javascript")
+			}
 			fileServer.ServeHTTP(w, r)
 			return
 		}
