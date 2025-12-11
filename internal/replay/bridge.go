@@ -1,3 +1,6 @@
+//go:build metal
+// +build metal
+
 package replay
 
 /*

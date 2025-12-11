@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPU Trace Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles if needed */
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-900">GPU Trace Dashboard</h1>
+            <p class="text-gray-600 mt-2">Interactive browser for .gputrace files</p>
+        </header>
+
+        <nav class="mb-8">
+            <ul class="flex space-x-4 border-b border-gray-300 pb-2">
+                <li><a href="/" class="text-blue-600 font-semibold border-b-2 border-blue-600 pb-2">Dashboard</a></li>
+                <li><a href="/kernels" class="text-gray-600 hover:text-blue-600">Kernels</a></li>
+                <li><a href="#" class="text-gray-400 cursor-not-allowed">API Calls</a></li>
+                <li><a href="#" class="text-gray-400 cursor-not-allowed">Encoders</a></li>
+                <li><a href="#" class="text-gray-400 cursor-not-allowed">Buffers</a></li>
+            </ul>
+        </nav>
+
+        <div id="stats-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <!-- Stats cards will be inserted here -->
+            <div class="bg-white rounded-lg shadow p-6 animate-pulse">
+                <div class="h-4 bg-gray-200 rounded w-1/2 mb-4"></div>
+                <div class="h-8 bg-gray-200 rounded w-1/3"></div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Quick Links</h2>
+                <ul class="space-y-2">
+                    <li><a href="/kernels" class="text-blue-600 hover:underline">View all Kernels</a></li>
+                    <li><a href="#" class="text-gray-400 cursor-not-allowed">View Timeline (Coming Soon)</a></li>
+                </ul>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Trace Info</h2>
+                <div id="trace-info" class="text-gray-700">
+                    Loading...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function fetchStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                renderStats(data);
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+                document.getElementById('stats-container').innerHTML = '<p class="text-red-500">Error loading statistics.</p>';
+            }
+        }
+
+        function renderStats(data) {
+            const container = document.getElementById('stats-container');
+            container.innerHTML = `
+                <div class="bg-white rounded-lg shadow p-6 border-l-4 border-blue-500">
+                    <h3 class="text-sm font-medium text-gray-500 uppercase">Total Kernels</h3>
+                    <p class="text-3xl font-bold text-gray-900 mt-2">${data.UniqueKernels}</p>
+                </div>
+                <div class="bg-white rounded-lg shadow p-6 border-l-4 border-green-500">
+                    <h3 class="text-sm font-medium text-gray-500 uppercase">Dispatches</h3>
+                    <p class="text-3xl font-bold text-gray-900 mt-2">${data.DispatchCalls}</p>
+                </div>
+                <div class="bg-white rounded-lg shadow p-6 border-l-4 border-yellow-500">
+                    <h3 class="text-sm font-medium text-gray-500 uppercase">Command Buffers</h3>
+                    <p class="text-3xl font-bold text-gray-900 mt-2">${data.CommandBuffers}</p>
+                </div>
+                <div class="bg-white rounded-lg shadow p-6 border-l-4 border-purple-500">
+                    <h3 class="text-sm font-medium text-gray-500 uppercase">Buffer Usage</h3>
+                    <p class="text-3xl font-bold text-gray-900 mt-2">${data.BufferUsageGB.toFixed(2)} GB</p>
+                </div>
+            `;
+
+            const traceInfo = document.getElementById('trace-info');
+            // We can add more metadata here if we send it in the API
+            // Note: TotalRecords is int
+            traceInfo.innerHTML = `
+                <p><strong>Total Records:</strong> ${data.TotalRecords.toLocaleString()}</p>
+                <p><strong>Unique Buffers:</strong> ${data.UniqueBuffers}</p>
+                <p><strong>Compute Encoders:</strong> ${data.ComputeEncoders}</p>
+            `;
+        }
+
+        document.addEventListener('DOMContentLoaded', fetchStats);
+    </script>
+</body>
+</html>
