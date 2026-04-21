@@ -683,7 +683,7 @@ func axPressWithFallbackWindow(el uintptr, windowAX uintptr) error {
 // axActionNames returns the list of actions supported by an element.
 func axActionNames(ax uintptr) []string {
 	var ptr uintptr
-	if axuiautomation.AXUIElementCopyActionNames(axuiautomation.AXUIElementRef(ax), &ptr) != 0 {
+	if axCopyActionNames(axuiautomation.AXUIElementRef(ax), &ptr) != 0 {
 		return nil
 	}
 	defer cfRelease(ptr)
@@ -987,7 +987,7 @@ func FindPathTextField(root uintptr) uintptr {
 // getWindowID extracts the CGWindowID from an AXUIElement (window).
 func getWindowID(windowAX uintptr) (uint32, error) {
 	var windowID uint32
-	if axuiautomation.AXUIElementGetWindow(axuiautomation.AXUIElementRef(windowAX), &windowID) != 0 {
+	if axGetWindow(axuiautomation.AXUIElementRef(windowAX), &windowID) != 0 {
 		return 0, fmt.Errorf("failed to get window ID from AX element")
 	}
 	return windowID, nil
